@@ -1,0 +1,255 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+#define FIFO1 "fifo1"
+#define FIFO2 "fifo2"
+
+int main()
+{
+    char buffer[1024];
+    int fd1, fd2;
+    ssize_t n;
+
+    // Create FIFOs
+    if (mkfifo(FIFO1, 0666) == -1 && access(FIFO1, F_OK) == -1)
+    {
+        perror("FIFO1 creation failed");
+        return 1;
+    }
+
+    if (mkfifo(FIFO2, 0666) == -1 && access(FIFO2, F_OK) == -1)
+    {
+        perror("FIFO2 creation failed");
+        return 1;
+    }
+
+    printf("Enter sentences (type END to finish):\n");
+
+    // Open FIFO1 for writing
+    fd1 = open(FIFO1, O_WRONLY);
+
+    if (fd1 == -1)
+    {
+        perror("FIFO1 opening failed");
+        return 1;
+    }
+
+    // Send sentences to Process 2
+    while (fgets(buffer, sizeof(buffer), stdin))
+    {
+        if (strcmp(buffer, "END\n") == 0)
+        {
+            break;
+        }
+
+        n = write(fd1, buffer, strlen(buffer));
+
+        if (n == -1)
+        {
+            perror("Write failed");
+            close(fd1);
+            return 1;
+        }
+    }
+
+    close(fd1);
+
+    // Open FIFO2 for reading
+    fd2 = open(FIFO2, O_RDONLY);
+
+    if (fd2 == -1)
+    {
+        perror("FIFO2 opening failed");
+        return 1;
+    }
+
+    printf("\nResult received from Process 2:\n\n");
+
+    // Receive and display results
+    while ((n = read(fd2, buffer, sizeof(buffer))) > 0)
+    {
+        write(STDOUT_FILENO, buffer, n);
+    }
+
+    close(fd2);
+
+    unlink(FIFO1);
+    unlink(FIFO2);
+
+    return 0;
+}
+
+
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <ctype.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+
+#define FIFO1 "fifo1"
+#define FIFO2 "fifo2"
+
+int main()
+{
+    char buffer[1024];
+    int fd1, fd2;
+    FILE *fp;
+    ssize_t n;
+
+    long characters = 0;
+    long words = 0;
+    long lines = 0;
+
+    int in_word = 0;
+    int last_char = '\n';
+
+    // Create FIFOs if they do not exist
+    if (mkfifo(FIFO1, 0666) == -1 && access(FIFO1, F_OK) == -1)
+    {
+        perror("FIFO1 creation failed");
+        return 1;
+    }
+
+    if (mkfifo(FIFO2, 0666) == -1 && access(FIFO2, F_OK) == -1)
+    {
+        perror("FIFO2 creation failed");
+        return 1;
+    }
+
+    // Open FIFO1 for reading
+    fd1 = open(FIFO1, O_RDONLY);
+
+    if (fd1 == -1)
+    {
+        perror("FIFO1 opening failed");
+        return 1;
+    }
+
+    // Read sentences from Process 1
+    while ((n = read(fd1, buffer, sizeof(buffer))) > 0)
+    {
+        for (int i = 0; i < n; i++)
+        {
+            unsigned char ch = (unsigned char)buffer[i];
+
+            characters++;
+            last_char = ch;
+
+            if (ch == '\n')
+            {
+                lines++;
+            }
+
+            if (isspace(ch))
+            {
+                in_word = 0;
+            }
+            else if (in_word == 0)
+            {
+                words++;
+                in_word = 1;
+            }
+        }
+    }
+
+    if (n == -1)
+    {
+        perror("FIFO1 reading failed");
+        close(fd1);
+        return 1;
+    }
+
+    close(fd1);
+
+    // Count final line if it has no newline
+    if (characters > 0 && last_char != '\n')
+    {
+        lines++;
+    }
+
+    // Create output file
+    fp = fopen("output.txt", "w");
+
+    if (fp == NULL)
+    {
+        perror("File creation failed");
+        return 1;
+    }
+
+    fprintf(fp, "Number of characters: %ld\n", characters);
+    fprintf(fp, "Number of words: %ld\n", words);
+    fprintf(fp, "Number of lines: %ld\n", lines);
+
+    fclose(fp);
+
+    // Open output file for reading
+    fp = fopen("output.txt", "r");
+
+    if (fp == NULL)
+    {
+        perror("File opening failed");
+        return 1;
+    }
+
+    // Open FIFO2 for writing
+    fd2 = open(FIFO2, O_WRONLY);
+
+    if (fd2 == -1)
+    {
+        perror("FIFO2 opening failed");
+        fclose(fp);
+        return 1;
+    }
+
+    // Send file contents to Process 1
+    while ((n = fread(buffer, 1, sizeof(buffer), fp)) > 0)
+    {
+        if (write(fd2, buffer, n) == -1)
+        {
+            perror("FIFO2 writing failed");
+            fclose(fp);
+            close(fd2);
+            return 1;
+        }
+    }
+
+    fclose(fp);
+    close(fd2);
+
+    printf("Analysis completed. Results saved in output.txt\n");
+
+    return 0;
+}
+
+
+gcc Assignment61.c -o Assignment61
+gcc Assignment62.c -o Assignment62
+Terminal 1 – Process 2
+./Assignment62
+
+
+Run this first. It waits for Process 1.
+
+Terminal 2 – Process 1
+
+Open another terminal in the same folder:
+./Assignment61
+
+
+Enter your sentences here.
+
+4. Example input
+In Terminal 2, enter:
+Hello my name is Hussain
+I am studying Information Technology
+END
+cat output.txt
+rm -f fifo1 fifo2
